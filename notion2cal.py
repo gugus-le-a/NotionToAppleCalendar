@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch a Notion database and export all dated entries as an .ics calendar file."""
+"""Fetch multiple Notion databases and export all dated entries into a single .ics calendar file."""
 
 import os
 import sys
@@ -9,7 +9,8 @@ import requests
 from icalendar import Calendar, Event
 
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
-NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID")
+# Vous pouvez spécifier un ou plusieurs IDs séparés par des virgules : "id1,id2"
+NOTION_DATABASE_IDS = os.environ.get("NOTION_DATABASE_IDS") or os.environ.get("NOTION_DATABASE_ID")
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "notion_calendar.ics")
 
 NOTION_API_VERSION = "2022-06-28"
@@ -94,19 +95,15 @@ def parse_datetime(value: str) -> datetime | date:
 
 def is_in_past(start, end) -> bool:
     """Return True if the event ended before today (should be excluded)."""
-    # Use end date if present, otherwise start date — an ongoing multi-day
-    # event should still appear until its end.
     reference = end if end is not None else start
 
     today = date.today()
     now = datetime.now(timezone.utc)
 
     if isinstance(reference, datetime):
-        # Make naive datetimes timezone-aware (assume UTC) for comparison
         if reference.tzinfo is None:
             reference = reference.replace(tzinfo=timezone.utc)
         return reference < now
-    # Pure date: include events whose date is today or later
     return reference < today
 
 
@@ -152,10 +149,8 @@ def build_calendar(pages: list[dict]) -> Calendar:
         if end:
             event.add("dtend", end)
         elif isinstance(start, date) and not isinstance(start, datetime):
-            # All-day event without end: single day
             pass
         else:
-            # Timed event without end: use start as end (zero-duration)
             event.add("dtend", start)
 
         if description:
@@ -172,7 +167,7 @@ def build_calendar(pages: list[dict]) -> Calendar:
 
     event_count = len(cal.subcomponents)
     print(
-        f"Processed {len(pages)} pages: {event_count} events created, "
+        f"Processed {len(pages)} total pages: {event_count} events created, "
         f"{skipped} skipped (no date), {skipped_past} skipped (past)"
     )
     return cal
@@ -182,15 +177,24 @@ def main() -> None:
     if not NOTION_TOKEN:
         print("Error: NOTION_TOKEN environment variable is not set.", file=sys.stderr)
         sys.exit(1)
-    if not NOTION_DATABASE_ID:
-        print("Error: NOTION_DATABASE_ID environment variable is not set.", file=sys.stderr)
+    if not NOTION_DATABASE_IDS:
+        print("Error: NOTION_DATABASE_IDS environment variable is not set.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Querying Notion database {NOTION_DATABASE_ID[:8]}...")
-    pages = query_database(NOTION_DATABASE_ID)
-    print(f"Fetched {len(pages)} pages from Notion.")
+    # Récupération et nettoyage des IDs séparés par des virgules
+    db_ids = [db_id.strip() for db_id in NOTION_DATABASE_IDS.split(",") if db_id.strip()]
 
-    cal = build_calendar(pages)
+    all_pages = []
+    for db_id in db_ids:
+        print(f"Querying Notion database {db_id[:8]}...")
+        try:
+            pages = query_database(db_id)
+            print(f"Fetched {len(pages)} pages from database {db_id[:8]}.")
+            all_pages.extend(pages)
+        except requests.exceptions.HTTPError as e:
+            print(f"Error fetching database {db_id[:8]}: {e}", file=sys.stderr)
+
+    cal = build_calendar(all_pages)
 
     with open(OUTPUT_FILE, "wb") as f:
         f.write(cal.to_ical())
