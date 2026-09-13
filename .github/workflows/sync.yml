@@ -36,7 +36,7 @@ jobs:
       - name: Run notion2cal
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_IDS }}
+          NOTION_DATABASE_IDS: ${{ secrets.NOTION_DATABASE_IDS }}
         run: python notion2cal.py
 
       - name: Commit and push .ics file
